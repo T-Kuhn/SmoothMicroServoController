@@ -17,18 +17,20 @@ SmoothMicroServoController::SmoothMicroServoController(int analogInPin, int move
     _AnalogInPin = analogInPin;
     _CWp = moveCWpin;
     _CCWp = moveCCWpin;
+    _Mode = 0;
+    _SkipExecCounter = 0;
+    _OutVal = 0.0;
+    _MinSpeed = 30;
+    _MaxSpeed = 60;
     
     pinMode(_CWp, OUTPUT);
     pinMode(_CCWp, OUTPUT);
 
-    _Mode = 0;
-    _SwipeCntr = 0;
-    _MaxSwipes = 2;
-    _Cntr = 1;
-    _MaxCount = 20;
-    _SwitchToLow = 8;
-
-    _Dir = false;
+    // set up Position Control variables
+    _CurrentPos = analogRead(_AnalogInPin);
+    _GoalPos = 512;
+    _GoalSpeed = 20;
+    _OldCurrentPos = _CurrentPos; 
 
     _DebugArrCntr = 0;
     for (int i=0; i < 3000; i++){
@@ -37,68 +39,116 @@ SmoothMicroServoController::SmoothMicroServoController(int analogInPin, int move
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - -
-// - - - - - - - - - MoveCW  - - - - - - - - - -
+// - - - - - - - - - Update  - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - -
-void SmoothMicroServoController::moveCW()
+void SmoothMicroServoController::update()
 {
-    if (analogRead(_AnalogInPin) < _MAX_COUNT_CW - 200 ) {
-        digitalWrite(_CCWp, LOW); 
-        digitalWrite(_CWp, _ModOut); 
-    } else {
-        digitalWrite(_CWp, HIGH); 
-        digitalWrite(_CCWp, HIGH); 
-        delay(200);
-        _SwipeCntr++;
-        _Dir = false;
+    if (_Mode == 1) {
+        _PositionControl(); 
+    } else if (_Mode == 2) {
+        _PositionControl(); 
+        _LogPosData(); 
     }
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - -
-// - - - - - - - - - MoveCCW  - - - - - - - - - -
+// - - - - - - - Position Control  - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - -
-void SmoothMicroServoController::moveCCW()
+void SmoothMicroServoController::_PositionControl()
 {
-    if (analogRead(_AnalogInPin) > _MAX_COUNT_CCW + 200 ) {
-        digitalWrite(_CWp, LOW); 
-        digitalWrite(_CCWp, _ModOut); 
+    _CurrentPos = analogRead(_AnalogInPin);
+    // smoothing input 
+    // compute current speed
+    _CurrentSpeed = _CurrentPos - _OldCurrentPos;
+    if((_GoalPos - _CurrentPos) > 0){
+        // we are moving in the positive direction!
+        if (abs(_GoalPos - _CurrentPos) > 300) {
+            // we are still more then 200 steps away from goalposition 
+            _OutVal +=  (_GoalPos - _CurrentPos) / 2000.0; 
+            if (_OutVal > _MaxSpeed) {
+                _OutVal = _MaxSpeed;
+            } else if (_OutVal < -_MaxSpeed){
+                _OutVal = -_MaxSpeed;
+            } 
+        } else {
+            // we are less than 200 steps away from goalpos    
+            _OutVal -=  (_GoalPos - _CurrentPos) / 2000.0; 
+            if (_OutVal > _MaxSpeed) {
+                _OutVal = _MaxSpeed;
+            } else if (_OutVal < _MinSpeed){
+                _OutVal = _MinSpeed;
+            } 
+        }
     } else {
-        digitalWrite(_CWp, HIGH); 
-        digitalWrite(_CCWp, HIGH); 
-        delay(200);
-        _SwipeCntr++;
-        _Dir = true;
+        // we are moving in the negative direction!
+        if (abs(_GoalPos - _CurrentPos) > 300) {
+            // we are still more then 200 steps away from goalposition 
+            _OutVal +=  (_GoalPos - _CurrentPos) / 2000.0; 
+            if (_OutVal > _MaxSpeed) {
+                _OutVal = _MaxSpeed;
+            } else if (_OutVal < -_MaxSpeed){
+                _OutVal = -_MaxSpeed;
+            } 
+        } else {
+            // we are less than 200 steps away from goalpos    
+            _OutVal -=  (_GoalPos - _CurrentPos) / 2000.0; 
+            if (_OutVal > -_MinSpeed) {
+                _OutVal = -_MinSpeed;
+            } else if (_OutVal < -_MaxSpeed){
+                _OutVal = -_MaxSpeed;
+            } 
+        }
     }
+
+    Serial.println(_OutVal);
+
+    if (abs(_GoalPos - _CurrentPos) < 5) {
+        analogWrite(_CCWp, 255);
+        analogWrite(_CWp, 255);
+    } else if (_OutVal > 0){
+        analogWrite(_CCWp, 0);
+        analogWrite(_CWp, abs((int)_OutVal));
+    } else {
+        analogWrite(_CWp, 0);
+        analogWrite(_CCWp, abs((int)_OutVal));
+    }    
+
+    _OldCurrentPos = _CurrentPos; 
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - -
-// - - - - - - - - - Debug_1 - - - - - - - - - -
+// - - - - - - Smoothing Input - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - -
-void SmoothMicroServoController::debug_1()
+void SmoothMicroServoController::_SmoothingInput()
 {
-    if (_SwipeCntr >= _MaxSwipes) {
-        sendPosData();
-        _SwipeCntr = 0;
-        _Mode = 0;
-        setUpMode();
-        return;
-    }
 
-    if (_Dir) {
-        moveCW(); 
-    } else {
-        moveCCW();
-    }
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - -
-// - - - - - - - - - SetUpMode - - - - - - - - -
+// - - - - - Compute Current Speed - - - - - - -
+// - - - - - - - - - - - - - - - - - - - - - - -
+void SmoothMicroServoController::_ComputeCurrentSpeed()
+{
+
+}
+    
+// - - - - - - - - - - - - - - - - - - - - - - -
+// - - - - - - -  Set Goal Pos - - - - - - - - -
+// - - - - - - - - - - - - - - - - - - - - - - -
+void SmoothMicroServoController::setGoalPos(short goalPos)
+{
+    _GoalPos = goalPos;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - -
+// - - - - - - - - Set Up Mode - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - -
 void SmoothMicroServoController::setUpMode()
 {
     char inByte;
     Serial.println("Choose your mode: ");   // send an initial string
-    Serial.println("1: debug_1");   
-    Serial.println("2: debug_2");   
+    Serial.println("1: Position Control");   
+    Serial.println("2: Debug");   
 
     while (Serial.available() <= 0) {
         delay(300);
@@ -107,55 +157,33 @@ void SmoothMicroServoController::setUpMode()
     inByte = Serial.read();
     if (inByte == '1') {
         _Mode = 1;
-        Serial.println("mode set to debug_1");    
+        Serial.println("mode set to Position Control");    
     }
     if (inByte == '2') {
         _Mode = 2;
-        Serial.println("mode set to debug_2");    
+        Serial.println("mode set to Debug");    
     }
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - -  Log Position Data  - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - -
-void SmoothMicroServoController::logPosData()
+void SmoothMicroServoController::_LogPosData()
 {
-    _DebugArr[_DebugArrCntr++] = (short) analogRead(_AnalogInPin);   
+    if (_DebugArrCntr < 3000){
+        _DebugArr[_DebugArrCntr++] = (short) analogRead(_AnalogInPin);   
+    }
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - Send Position Data  - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - -
 
-void SmoothMicroServoController::sendPosData()
+void SmoothMicroServoController::_SendPosData()
 {
     for (int i=0; i < 3000; i++) {
         Serial.println(_DebugArr[i]);
     }
 }
 
-// - - - - - - - - - - - - - - - - - - - - - - -
-// - - - - - - - - - Update  - - - - - - - - - -
-// - - - - - - - - - - - - - - - - - - - - - - -
-void SmoothMicroServoController::update()
-{
-    if (_Cntr == _SwitchToLow) {
-        _ModOut = 0;
-    }
-
-    // Count up to MaxCount. Restart at MaxCount + 1.
-    if (_Cntr < _MaxCount) {
-        _Cntr++; 
-    } else {
-        _ModOut = 1;
-        _Cntr = 1;
-    }
-
-    // Log Position Data for debug
-    logPosData(); 
-
-    if (_Mode == 1) {
-        debug_1(); 
-    }
-}
 
